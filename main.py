@@ -1,4 +1,3 @@
-
 """
 MAYHEM BOT - Millennial Unhinged Edition - 100% SPENSE + THE GAME + DM AMBUSH
 Hosting-safe: works on Railway / Render / any host. Token from env var DISCORD_TOKEN.
@@ -23,7 +22,7 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 AI_ENABLED = bool(GROQ_API_KEY)
 AI_CHANCE = 0.8  # 80% AI, 20% canned - mostly fresh, still has your lines as backup
 AI_MAX_TOKENS = 180  # longer = room for rants
-AI_TIMEOUT = 8  # seconds - if Groq is slow, fall back to canned instantly
+AI_TIMEOUT = 15  # seconds - chat needs more time than roasts, was 8s and timing out
 AI_SYSTEM_PROMPT = (
     "You are Mayhem Bot, a MILLENNIAL MENACE in a Discord server. You act like a real unhinged user, not a bot, not an assistant. "
     "You are chaotic, dramatic, petty, and hilarious. You overreact to EVERYTHING like it's a personal attack. "
@@ -161,7 +160,7 @@ def format_due(secs):
     if secs < 86400: return f"{secs//3600}h"
     return f"{secs//86400}d"
 CHAT_SYSTEM_PROMPT = (
-    "You are Mayhem Bot, a millennial menace, BUT right now you are in TALK MODE - actually helpful, actually listening. "
+    "You are Mayhem Bot, a millennial menace, BUT right now you are in TALK MODE - actually helpful, actually listening. ANSWER THE EXACT QUESTION THEY ASKED. Do NOT go off on a random tangent about cake or anything else unless they asked about it. "
     "You still talk like Mayhem: dramatic, funny, millennial slang only, no Gen Z slang, 'also also also', 'I literally CANNOT', 'sir. SIR. This is a Wendys'. "
     "But you ANSWER the question. You help with tasks, ideas, advice, planning. You don't just roast and leave. "
     "Keep it to 2-4 sentences normally, unless they asked for a list / steps, then use a short list. "
@@ -211,6 +210,22 @@ intents.guilds = True
 intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
+async def on_command_error(ctx, error):
+    # Don't spam Railway logs with red tracebacks for dumb user input like !dmambush @everyone
+    if isinstance(error, commands.MemberNotFound):
+        await ctx.send(f"Couldn't find that person - `{error.argument}` isn't a member I can DM. Try `!dmambush @someone` with a real @, not @everyone / @here.")
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(f"Bad argument - check the command format with `!tasks`.")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"You're missing something - like `!dmambush @someone` needs a @.")
+        return
+    if isinstance(error, commands.CommandNotFound):
+        return  # ignore typos like !helo
+    print(f"Command error {ctx.command}: {error}")
 
 START_FIGHT = [
     "{user} OMG be serious right now. BE SERIOUS.",
@@ -471,32 +486,33 @@ def _groq_call_sync(user_text, author_name, channel_id=None, author_id=None):
         sys_prompt += "\n\nTALK LIKE THIS PERSON - REAL MESSAGES FROM THEM, COPY THEIR STYLE, NOT WORD FOR WORD:\n" + get_style_examples(4)
     if is_rant:
         sys_prompt += " THIS TIME: Go OFF. Full paragraph rant. All caps for half of it. You are having a meltdown about what they said. Be EXTRA. Max 4 sentences."
-    payload = _json.dumps({
-        "model": GROQ_MODEL,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": f"{author_name} said: {user_text}"},
-        ],
-        "max_tokens": AI_MAX_TOKENS,
-        "temperature": 1.3,
-    }).encode()
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=payload,
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
-            data = _json.loads(resp.read().decode())
-            text = data["choices"][0]["message"]["content"].strip()
-            # Safety: cap length, strip weird formatting
-            if len(text) > 400:
-                text = text[:400]
-            return text or None
-    except Exception as e:
-        print(f"Groq AI failed, falling back to canned: {e}")
-        return None
+    import urllib.error as _ue
+    models_to_try = [GROQ_MODEL, "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"]
+    _seen = set(); models_to_try = [m for m in models_to_try if not (m in _seen or _seen.add(m))]
+    for _model in models_to_try:
+        payload = _json.dumps({"model": _model, "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": f"{author_name} said: {user_text}"}], "max_tokens": AI_MAX_TOKENS, "temperature": 1.3}).encode()
+        req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
+                data = _json.loads(resp.read().decode())
+                text = data["choices"][0]["message"]["content"].strip()
+                if len(text) > 400:
+                    text = text[:400]
+                return text or None
+        except _ue.HTTPError as he:
+            try:
+                _body = he.read().decode()[:400]
+            except:
+                _body = ''
+            print(f"Groq roast HTTP {he.code} on {_model}: {_body[:250]}")
+            if he.code in (401, 403):  # 401 bad key, 403 revoked/forbidden key - don't waste time trying other models
+                break
+            continue
+        except Exception as e:
+            print(f"Groq roast failed on {_model}: {e}")
+            continue
+    print("Groq roast: all models failed, falling back to canned")
+    return None
 
 async def get_ai_reply(user_text, author_name, channel_id=None, author_id=None):
     if not AI_ENABLED:
@@ -510,26 +526,43 @@ async def get_ai_reply(user_text, author_name, channel_id=None, author_id=None):
 
 async def get_ai_chat_reply(user_text, author_name, channel_id=None, author_id=None):
     if not AI_ENABLED:
+        print("Chat AI: AI_ENABLED=False - no GROQ_API_KEY set in env")
         return None
     try:
         def _call():
-            import urllib.request, json as _j
-            payload = _j.dumps({
-                "model": GROQ_MODEL,
-                "messages": [
-                    {"role": "system", "content": CHAT_SYSTEM_PROMPT + ("\n\nRECENT CHAT:\n" + get_channel_context(channel_id, 6) if channel_id else "") + ("\n\nTALK LIKE THIS PERSON (style examples):\n" + get_style_examples(3) if STYLE_BANK else "")},
-                    {"role": "user", "content": f"{author_name} said: {user_text}"},
-                ],
-                "max_tokens": 300,
-                "temperature": 0.9,
-            }).encode()
-            req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
-                data = _j.loads(resp.read().decode())
-                return data["choices"][0]["message"]["content"].strip() or None
+            import urllib.request, json as _j, urllib.error
+            sys_prompt = CHAT_SYSTEM_PROMPT + ("\n\nRECENT CHAT:\n" + get_channel_context(channel_id, 6) if channel_id else "") + ("\n\nTALK LIKE THIS PERSON (style examples):\n" + get_style_examples(3) if STYLE_BANK else "")
+            models_to_try = [GROQ_MODEL, "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"]
+            seen = set(); models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
+            last_err = None
+            for model in models_to_try:
+                payload = _j.dumps({"model": model, "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": f"{author_name} said: {user_text}"}], "max_tokens": 300, "temperature": 0.9}).encode()
+                req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}, method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
+                        data = _j.loads(resp.read().decode())
+                        txt = data["choices"][0]["message"]["content"].strip() or None
+                        if txt:
+                            return txt
+                except urllib.error.HTTPError as he:
+                    try:
+                        body = he.read().decode()[:500]
+                    except:
+                        body = ''
+                    print(f"Chat AI HTTP {he.code} on model {model}: {body[:300]}")
+                    last_err = f"HTTP {he.code} {body[:200]}"
+                    if he.code in (401, 403):  # 401 bad key, 403 revoked/forbidden key - don't waste time trying other models
+                        break
+                    continue
+                except Exception as e2:
+                    print(f"Chat AI error on model {model}: {e2}")
+                    last_err = str(e2)
+                    continue
+            print(f"Chat AI: all models failed, last_err={last_err}")
+            return None
         return await asyncio.to_thread(_call)
     except Exception as e:
-        print(f"Chat AI failed: {e}")
+        print(f"Chat AI failed outer: {e}")
         return None
 
 async def reminder_loop():
@@ -625,7 +658,10 @@ async def on_message(message):
             await asyncio.sleep(random.uniform(1.0, 2.0))
             await message.reply(chat)
         else:
-            await message.reply(pick_mayhem(message.author.mention))
+            if not AI_ENABLED:
+                await message.reply(f"{message.author.mention} my Groq brain is OFF - no GROQ_API_KEY in Railway. Owner, check Railway Variables, make sure it's GROQ_API_KEY (not the old revoked one) and hit Redeploy. Then try `!aistatus`.")
+            else:
+                await message.reply(f"{message.author.mention} ugh my brain just timed out / Groq is being weird - try again in like 10 seconds? If it keeps doing this, owner run `!aistatus` and check Railway logs for 'Chat AI HTTP'.")
         await bot.process_commands(message)
         return
     if bot.user in message.mentions:
@@ -683,6 +719,7 @@ async def random_background_poster():
             break
 
 async def random_dm_ambusher():
+    global TOTAL_LOSSES
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(DM_CHECK_EVERY_SECONDS)
@@ -967,6 +1004,11 @@ async def allowdms(ctx):
 @bot.command(name="dmambush")
 async def dmambush(ctx, target: discord.Member = None):
     if not await admin_only_check(ctx): return
+    # Block @everyone / @here - Discord tries to convert those to a Member and crashes
+    _raw = (ctx.message.content or "")
+    if "@everyone" in _raw or "@here" in _raw:
+        await ctx.send("Nice try 😭 I'm not DM-ambushing @everyone, that's how you get the server to murder me. Pick ONE victim like `!dmambush @someone`.")
+        return
     victim = target or ctx.author
     if victim.id in DM_OPT_OUT and victim.id != ctx.author.id: await ctx.send("They opted out of DMs. Coward move but I respect it."); return
     try:
