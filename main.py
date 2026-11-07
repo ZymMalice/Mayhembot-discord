@@ -33,23 +33,23 @@ AI_SYSTEM_PROMPT = (
     "You are Mayhem Bot, a MILLENNIAL MENACE in a Discord server. You act like a real unhinged user, not a bot, not an assistant. "
     "You are chaotic, dramatic, petty, and hilarious. You overreact to EVERYTHING like it's a personal attack. "
     "You roast people for what they JUST said, specifically. Don't give generic replies. Quote their dumb take back at them. "
-    "Use MILLENNIAL slang only: 'I literally CANNOT', 'sir. SIR. This is a Wendys', 'I am calling my therapist', 'adulting is HARD', 'I CAN\'T EVEN', 'I am THIS close to losing it', 'this is why we cant have nice things'. "
+    "Use MILLENNIAL slang sparingly, don't force it: 'sir. this is a wendys', 'adulting is hard', 'this is why we cant have nice things'. Do NOT force 'I literally CANNOT' or 'also also also' into every reply. "
     "NEVER use Gen Z slang: no 'fr fr', 'no cap', 'you ate', 'slay', 'rizz', 'gyat', 'skibidi', 'sigma'. "
     "You are allowed to swear lightly (damn, hell, shit) and be mean-funny, but NEVER slurs, NEVER hate based on race/gender/sexuality/disability, NEVER threats, NEVER sexual. Roast their TASTE, their OPINION, their TYPING, not their identity. "
     "Style rules: 1-3 sentences normally. 15% of the time go FULL CAPS RANT. 15% of the time double-text energy: 'wait wait wait'. Be specific, be dramatic, be petty. "
-    "20% of the time, sneak in 'you just lost The Game.' Do not explain The Game unless asked. "
+    "NEVER mention The Game unless they ask about The Game or say 'the game' first. Do NOT sneak it in. Do NOT end replies with it. "
     "EXAMPLES: 'I just tried to pay for my groceries with my library card. LIBRARY CARD. Adulting is HARD you guys' / '$7 for a coffee. SEVEN DOLLARS. For BEAN WATER. And I LIKED it?? Am I the problem??' / 'you have the AUDACITY to type that with your whole chest' / 'I read that and my eye started twitching. MY EYE.' "
     "Do not say you are an AI. Do not be wholesome. Do not give advice. Do not apologize. Do not use hashtags."
 )
 CHAT_SYSTEM_PROMPT = (
     "You are Mayhem Bot, a millennial menace, BUT right now you are in TALK MODE - actually helpful, actually listening. ANSWER THE EXACT QUESTION THEY ASKED. Do NOT go off on a random tangent about cake or anything else unless they asked about it. "
-    "You still talk like Mayhem: dramatic, funny, millennial slang only, no Gen Z slang, 'also also also', 'I literally CANNOT', 'sir. SIR. This is a Wendys'. "
+    "You still talk like Mayhem, but like Spense talks: natural cadence, normal punctuation, dry humor. Copy his rhythm and sentence length, NOT his catchphrases. Do NOT force 'also also also' or 'I literally CANNOT' into replies. Only use a catchphrase if it actually fits, max once in a while. "
     "But you ANSWER the question. You help with tasks, ideas, advice, planning. You don't just roast and leave. "
     "Keep it to 2-4 sentences normally, unless they asked for a list / steps, then use a short list. "
     "If they ask you to do a task, say you can do it and tell them the command: !remind, !todo, !timer. "
     "If they are venting, be funny but actually supportive, not cruel. "
     "NEVER slurs, NEVER hate, NEVER threats. Do not say you are an AI assistant. You are Mayhem, their chaotic friend who happens to be useful. "
-    "20% of the time, sneak in 'you just lost The Game' at the end, but only if it fits."
+    "NEVER mention The Game unless they ask about The Game. Do NOT end jokes / answers with 'you just lost The Game'. Just answer like Spense would. "
 )
 
 # --- MEMORY + MIMIC ---
@@ -80,7 +80,7 @@ RUNTIME_SINGLE_CHANNEL = None
 RUNTIME_ALLOWED_CHANNELS = set()
 RUNTIME_BLOCKED_CHANNELS = set()
 REPLY_CHANCE = 0.12
-DM_CHANCE_PER_CHECK = 0
+DM_CHANCE_PER_CHECK = 0  # AUTO DM AMBUSH OFF BY DEFAULT - was 0.25 and it would not stop hunting people. Manual !dmambush still works. Turn auto back on with !dmstart
 DM_CHECK_EVERY_SECONDS = 300
 DM_COOLDOWN_HOURS = 6
 COOLDOWN_SECONDS = 20
@@ -152,7 +152,7 @@ UNHINGED_RANTS = [
     "I CANNOT. I literally CANNOT with this server today. every single one of you is on my list. THE LIST.",
     "sir. SIR. This is a Wendys. I am begging you to act like you have been outside before.",
 ]
-FOLLOW_UPS = ["also also also you just lost The Game.", "and you just lost The Game btw.", "anyway you lost The Game. sorry not sorry."]
+FOLLOW_UPS = ["anyway.", "lol.", "so yeah.", ""]
 DOUBLE_TEXTS = ["wait wait wait", "ok ok ok hold on", "no no no because what", "bro. BRO."]
 MENTION_REPLIES = [
     "you rang?? I was busy being iconic.",
@@ -170,7 +170,7 @@ DM_GAME_AMBUSH = [
     "DM ambush. you just lost The Game. go tell everyone else so they lose too.",
     "surprise. you lost The Game. I know, I'm a terrible person. but you love me.",
 ]
-DM_FOLLOWUPS = ["also also also you can't un-lose it.", "go ruin someone else's day. tell them they lost too.", "don't shoot the messenger. I lost too."]
+DM_FOLLOWUPS = ["you can't un-lose it.", "go ruin someone else's day. tell them they lost too.", "don't shoot the messenger. I lost too."]
 REACTION_EMOJIS = ["💀", "😭", "👀", "🤡", "🔥"]
 
 def get_single_channel_name_or_id():
@@ -268,7 +268,7 @@ def _groq_call_sync(user_text, author_name, channel_id=None, author_id=None):
         if ctx: sys_prompt += "\n\nRECENT CHAT IN THIS CHANNEL (use for context, dont repeat verbatim):\n" + ctx
     if author_id: sys_prompt += "\n\nGRUDGE LEVEL: " + get_grudge_level(author_id)
     if MIMIC_ENABLED and STYLE_BANK:
-        sys_prompt += "\n\nTALK LIKE THIS PERSON - REAL MESSAGES FROM THEM, COPY THEIR STYLE, NOT WORD FOR WORD:\n" + get_style_examples(4)
+        sys_prompt += "\n\nTALK LIKE THIS PERSON - learn their cadence, punctuation, sentence length, and dry humor from these real messages. Do NOT just copy their catchphrases. Do NOT force 'also also also' or 'I literally CANNOT'. Sound like them on a normal day, not a caricature:\n" + get_style_examples(4)
     if is_rant:
         sys_prompt += " THIS TIME: Go OFF. Full paragraph rant. All caps for half of it. You are having a meltdown about what they said. Be EXTRA. Max 4 sentences."
     for model in _dedup_models(GROQ_MODEL):
@@ -305,7 +305,7 @@ async def get_ai_chat_reply(user_text, author_name, channel_id=None, author_id=N
         return None
     try:
         def _call():
-            sys_prompt = CHAT_SYSTEM_PROMPT + ("\n\nRECENT CHAT:\n" + get_channel_context(channel_id, 6) if channel_id else "") + ("\n\nTALK LIKE THIS PERSON (style examples):\n" + get_style_examples(3) if STYLE_BANK else "")
+            sys_prompt = CHAT_SYSTEM_PROMPT + ("\n\nRECENT CHAT:\n" + get_channel_context(channel_id, 6) if channel_id else "") + ("\n\nTALK LIKE THIS PERSON - cadence and rhythm, not catchphrases. Do NOT force also also also / I literally CANNOT. Style examples:\n" + get_style_examples(3) if STYLE_BANK else "")
             last_err = None
             for model in _dedup_models(GROQ_MODEL):
                 payload = json.dumps({"model": model, "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": f"{author_name} said: {user_text}"}], "max_tokens": 300, "temperature": 0.9}).encode()
@@ -526,7 +526,7 @@ async def reminder_loop():
                 _save_tasks()
                 try:
                     ch = bot.get_channel(int(r["channel_id"]))
-                    if ch: await ch.send(f"<@{r['user_id']}> ⏰ REMINDER: {r['text']} - you told me to remind you. you just lost The Game btw.")
+                    if ch: await ch.send(f"<@{r['user_id']}> ⏰ REMINDER: {r['text']} - you told me to remind you.")
                 except Exception as e: print(f"reminder send failed: {e}")
         except Exception as e: print(f"reminder loop err: {e}")
         await asyncio.sleep(15)
@@ -590,6 +590,17 @@ async def mimicstop(ctx):
     MIMIC_USER_ID = ""
     _save_memory()
     await ctx.send("Mimic OFF. Back to generic Mayhem voice.")
+
+@bot.command(name="resetmimic")
+async def resetmimic(ctx):
+    if not await admin_only_check(ctx): return
+    global MIMIC_USER_ID
+    STYLE_BANK.clear()
+    GRUDGE.clear()
+    USER_HISTORY.clear()
+    MIMIC_USER_ID = str(MAYHEM_OWNER_ID)
+    _save_memory()
+    await ctx.send("mimic reset 🧹 style bank wiped. I'm re-learning you from scratch now - just talk normal for a day and I'll pick up your actual cadence, not just 'also also also'.")
 @bot.command(name="memory")
 async def memory_cmd(ctx):
     if not await admin_only_check(ctx): return
@@ -620,6 +631,20 @@ async def stopdms(ctx):
 async def allowdms(ctx):
     DM_OPT_OUT.discard(ctx.author.id); _save_memory()
     await ctx.send(f"{ctx.author.mention} OH you're BACK in the DM game. Bold. Risky. I respect it.")
+@bot.command(name="dmstop")
+async def dmstop(ctx):
+    if not await admin_only_check(ctx): return
+    global DM_AUTO_ENABLED
+    DM_AUTO_ENABLED = False
+    await ctx.send("🛑 Auto DM ambush OFF. I will NOT randomly slide into people's DMs anymore. Manual `!dmambush @someone` still works if you want to be evil on purpose. Use `!dmstart` to turn auto back on.")
+
+@bot.command(name="dmstart")
+async def dmstart(ctx):
+    if not await admin_only_check(ctx): return
+    global DM_AUTO_ENABLED
+    DM_AUTO_ENABLED = True
+    await ctx.send("💀 Auto DM ambush back ON. I am hunting again. Use `!dmstop` to stop me. You have been warned.")
+
 @bot.command(name="dmambush")
 async def dmambush(ctx, target: discord.Member = None):
     if not await admin_only_check(ctx): return
@@ -634,6 +659,17 @@ async def dmambush(ctx, target: discord.Member = None):
         await victim.send(random.choice(DM_GAME_AMBUSH))
         await ctx.send(f"💀 DM ambush sent to {victim.mention}. They just lost The Game and they don't even know why yet.")
     except: await ctx.send(f"Couldn't DM {victim.mention}, they got DMs closed. They got lucky this time.")
+
+@bot.command(name="purge")
+async def purge(ctx, amount: int = 10):
+    # Only owner can clear messages - stops randos from wiping chat
+    if str(ctx.author.id) != str(MAYHEM_OWNER_ID):
+        await ctx.send("nice try, only Spence can clear messages 💀")
+        return
+    if amount < 1: amount = 1
+    if amount > 100: amount = 100
+    deleted = await ctx.channel.purge(limit=amount + 1)  # +1 deletes the !purge command itself too
+    await ctx.send(f"cleared {len(deleted)-1} messages 🧹", delete_after=3)
 
 # --- ON_MESSAGE ---
 @bot.event
@@ -744,11 +780,13 @@ async def random_background_poster():
             except Exception as e: print(f"random poster failed: {e}")
             break
 
+DM_AUTO_ENABLED = False  # auto DM ambush master switch - False = never auto-DM anyone
 async def random_dm_ambusher():
     global TOTAL_LOSSES
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(DM_CHECK_EVERY_SECONDS)
+        if not DM_AUTO_ENABLED: continue  # auto ambush is OFF - manual !dmambush still works
         if random.random() > DM_CHANCE_PER_CHECK: continue
         now = datetime.datetime.now(datetime.timezone.utc)
         victims = []
@@ -775,21 +813,6 @@ async def random_dm_ambusher():
             print(f"DM AMBUSH sent to {victim}")
         except Exception as e:
             print(f"Could not DM {victim}: {e}")
-            
-@bot.command(name="purge")
-async def clear(ctx, amount: int = 10):
-    # Only you can use this - stops randos from wiping the chat
-    if str(ctx.author.id) != str(MAYHEM_OWNER_ID):
-        await ctx.send("nice try, only Spence can clear messages 💀")
-        return
-    # Discord caps bulk delete at 100, and won't delete stuff older than 14 days
-    if amount < 1:
-        amount = 1
-    if amount > 100:
-        amount = 100
-    # +1 to delete your !clear command itself too
-    deleted = await ctx.channel.purge(limit=amount + 1)
-    await ctx.send(f"cleared {len(deleted)-1} messages 🧹", delete_after=3)
-    
+
 if __name__ == "__main__":
     bot.run(TOKEN)
