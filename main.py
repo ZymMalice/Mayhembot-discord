@@ -775,6 +775,21 @@ async def random_dm_ambusher():
             print(f"DM AMBUSH sent to {victim}")
         except Exception as e:
             print(f"Could not DM {victim}: {e}")
-
+            
+@bot.command(name="clear")
+async def clear(ctx, amount: int = 10):
+    # Only you can use this - stops randos from wiping the chat
+    if str(ctx.author.id) != str(MAYHEM_OWNER_ID):
+        await ctx.send("nice try, only Spence can clear messages 💀")
+        return
+    # Discord caps bulk delete at 100, and won't delete stuff older than 14 days
+    if amount < 1:
+        amount = 1
+    if amount > 100:
+        amount = 100
+    # +1 to delete your !clear command itself too
+    deleted = await ctx.channel.purge(limit=amount + 1)
+    await ctx.send(f"cleared {len(deleted)-1} messages 🧹", delete_after=3)
+    
 if __name__ == "__main__":
     bot.run(TOKEN)
