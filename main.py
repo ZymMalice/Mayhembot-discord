@@ -1,4 +1,5 @@
 
+
 """
 MAYHEM BOT - Millennial Unhinged Edition - 100% SPENSE + THE GAME + DM AMBUSH
 Hosting-safe: works on Railway / Render / any host. Token from env var DISCORD_TOKEN.
@@ -166,13 +167,71 @@ MENTION_REPLIES = ["WHAT. What do you want. I was literally minding my own busin
 REACTION_EMOJIS = ["💀","😭","🤨","👀","🔥","😂","🤡","🧐","🙄","✨","😩","💅"]
 REPLY_CHANCE = 0.14
 GAME_CHANCE = 0.18
-RANDOM_POST_CHANCE_PER_MINUTE = 0.08
+# --- RANDOM DROPS: LEASHED ---
+# Was: check every 60s, 8% chance, any channel, 20s cooldown = wandering everywhere.
+# Now: check every 60s, 3% chance, 1 channel per 45 min globally, 1 hour per-channel cooldown.
+RANDOM_POST_CHANCE_PER_MINUTE = 0.03
 GAME_POST_CHANCE = 0.25
-COOLDOWN_SECONDS = 20
+COOLDOWN_SECONDS = 20  # for replies to people
+RANDOM_POST_COOLDOWN_SECONDS = 3600  # 1 hour before same channel gets another random drop
+RANDOM_GLOBAL_COOLDOWN_SECONDS = 2700  # 45 min before ANY channel gets another random drop
 DM_CHECK_EVERY_SECONDS = 300
 DM_CHANCE_PER_CHECK = 0.35
 DM_COOLDOWN_HOURS = 6
 last_action = {}
+last_random_post_at = None  # global last random drop
+last_random_post_by_channel = {}  # channel_id -> datetime
+
+# Channel allow/block lists. Set via env or via !mayhemhere / !mayhemoff in Discord.
+# Env format: MAYHEM_CHANNELS=123456789,987654321  OR  MAYHEM_CHANNELS=general,shitpost,mayhem
+# If MAYHEM_CHANNELS is set, random drops ONLY go there. If empty, random drops go anywhere EXCEPT blocked.
+def _parse_channel_list(raw):
+    if not raw: return set()
+    return {x.strip().lower() for x in raw.split(',') if x.strip()}
+MAYHEM_CHANNELS = _parse_channel_list(os.getenv("MAYHEM_CHANNELS", ""))
+# --- SINGLE CHANNEL MODE ---
+# Only 1 channel gets random drops. Everything else: replies only.
+# Set via Railway env: MAYHEM_CHANNEL=mayhem  OR  MAYHEM_CHANNEL=123456789 (channel ID is best)
+# Or in Discord: go to that channel and type !mayhemhere - that becomes THE channel.
+# If no channel is set, bot looks for a channel literally named "mayhem". If none exists, it drops NOTHING randomly.
+MAYHEM_CHANNEL = os.getenv("MAYHEM_CHANNEL", "").strip().lower()
+if not MAYHEM_CHANNEL and MAYHEM_CHANNELS:
+    MAYHEM_CHANNEL = sorted(MAYHEM_CHANNELS)[0]  # backwards compat: take first of old list
+RUNTIME_SINGLE_CHANNEL = None  # set by !mayhemhere, format "id" or "name"
+def get_single_channel_name_or_id():
+    return (RUNTIME_SINGLE_CHANNEL or MAYHEM_CHANNEL or "mayhem")
+def find_mayhem_channel(guild):
+    target = get_single_channel_name_or_id()
+    if not target:
+        return None
+    for c in guild.text_channels:
+        if str(c.id) == str(target) or (c.name or "").lower() == str(target).lower():
+            if c.permissions_for(guild.me).send_messages:
+                return c
+    return None
+MAYHEM_BLOCKED_CHANNELS = _parse_channel_list(os.getenv("MAYHEM_BLOCKED_CHANNELS", "announcements,rules,mod-log,mods,admin,serious,vent"))
+# Runtime overrides from Discord commands (per-channel opt-in/out, survives until restart)
+RUNTIME_ALLOWED_CHANNELS = set()
+RUNTIME_BLOCKED_CHANNELS = set()
+
+def _channel_matches(channel, allow_set, block_set):
+    # match by id (as string) or by name (lowercase)
+    cid = str(channel.id)
+    name = (channel.name or "").lower()
+    if cid in block_set or name in block_set: return False
+    if allow_set:
+        return cid in allow_set or name in allow_set
+    return True
+
+def mayhem_allowed_in(channel):
+    # Runtime block wins, then env block, then runtime allow, then env allow
+    cid = str(channel.id); name = (channel.name or "").lower()
+    if cid in RUNTIME_BLOCKED_CHANNELS or name in RUNTIME_BLOCKED_CHANNELS: return False
+    if cid in MAYHEM_BLOCKED_CHANNELS or name in MAYHEM_BLOCKED_CHANNELS: return False
+    combined_allow = MAYHEM_CHANNELS | RUNTIME_ALLOWED_CHANNELS
+    if combined_allow:
+        return cid in combined_allow or name in combined_allow
+    return True
 
 def on_cooldown(channel_id):
     last = last_action.get(channel_id)
@@ -256,15 +315,22 @@ async def on_message(message):
     await bot.process_commands(message)
 
 async def random_background_poster():
+    global last_random_post_at
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(60)
         if random.random() > RANDOM_POST_CHANCE_PER_MINUTE: continue
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if last_random_post_at and (now - last_random_post_at).total_seconds() < RANDOM_GLOBAL_COOLDOWN_SECONDS: continue
         for guild in bot.guilds:
-            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-            if not channels: continue
-            ch = random.choice(channels)
-            if on_cooldown(ch.id): continue
+            # SINGLE CHANNEL ONLY - no wandering, no random.choice over channels
+            ch = find_mayhem_channel(guild)
+            if not ch: continue
+            if not mayhem_allowed_in(ch): continue
+            last = last_random_post_by_channel.get(ch.id)
+            if last and (now - last).total_seconds() < RANDOM_POST_COOLDOWN_SECONDS: continue
+            last_random_post_at = now
+            last_random_post_by_channel[ch.id] = now
             mark_action(ch.id)
             try:
                 if random.random() < GAME_POST_CHANCE: await ch.send(random.choice(GAME_SNEAKY) + " " + pick_game_loss(""))
@@ -302,6 +368,53 @@ async def random_dm_ambusher():
             print(f"DM AMBUSH sent to {victim}")
         except Exception as e:
             print(f"Could not DM {victim}: {e}")
+
+@bot.command(name="mayhemhere")
+async def mayhemhere(ctx):
+    """Set THIS channel as THE ONE mayhem channel. Replaces any previous one."""
+    global RUNTIME_SINGLE_CHANNEL
+    RUNTIME_SINGLE_CHANNEL = str(ctx.channel.id)
+    RUNTIME_BLOCKED_CHANNELS.discard(str(ctx.channel.id))
+    RUNTIME_ALLOWED_CHANNELS.add(str(ctx.channel.id))
+    await ctx.send(f"✅ Locked in. Random drops now ONLY go in #{ctx.channel.name}. Nowhere else. No wandering.")
+
+@bot.command(name="mayhemoff")
+async def mayhemoff(ctx):
+    """If THIS is the mayhem channel, turn random drops off completely. If not, just block this channel."""
+    global RUNTIME_SINGLE_CHANNEL
+    if str(ctx.channel.id) == str(RUNTIME_SINGLE_CHANNEL) or (ctx.channel.name or "").lower() == get_single_channel_name_or_id():
+        RUNTIME_SINGLE_CHANNEL = None
+        await ctx.send(f"🚫 Got it. Random drops OFF. No single channel set now. Run !mayhemhere in a channel to set a new one, or set MAYHEM_CHANNEL in Railway.")
+    else:
+        RUNTIME_BLOCKED_CHANNELS.add(str(ctx.channel.id))
+        await ctx.send(f"🚫 Got it. No random drops in #{ctx.channel.name}.")
+
+@bot.command(name="mayhemstop")
+async def mayhemstop(ctx):
+    """Turn OFF all random background drops everywhere. Replies + DMs + commands still work."""
+    global RANDOM_POST_CHANCE_PER_MINUTE
+    RANDOM_POST_CHANCE_PER_MINUTE = 0
+    await ctx.send("🛑 Random drops OFF everywhere. I’ll only talk when someone talks to me, or when you use !dmambush. Use !mayhemstart to turn them back on.")
+
+@bot.command(name="mayhemstart")
+async def mayhemstart(ctx):
+    """Turn random background drops back on (3% per minute, 45 min global cooldown)."""
+    global RANDOM_POST_CHANCE_PER_MINUTE
+    RANDOM_POST_CHANCE_PER_MINUTE = 0.03
+    await ctx.send("🔥 Random drops back ON — but leashed. 1 drop max every 45 min, 1 hour per channel, only in allowed channels.")
+
+@bot.command(name="mayhemwhere")
+async def mayhemwhere(ctx):
+    """Show the ONE channel random drops go to."""
+    target = get_single_channel_name_or_id()
+    # Try to resolve name for display
+    display = target
+    for g in bot.guilds:
+        ch = find_mayhem_channel(g)
+        if ch:
+            display = f"#{ch.name} (ID: {ch.id})"
+            break
+    await ctx.send(f"**Random drops go to ONE channel only:**\n{ display }\nCooldown: 45 min globally, 1 hour per channel. Chance: {int(RANDOM_POST_CHANCE_PER_MINUTE*100)}% per minute.\nReplies to people still work in every channel — this only limits the random drops.\nTo change it, go to the channel you want and type !mayhemhere")
 
 @bot.command(name="chill")
 async def chill(ctx): await ctx.send("fine. FINE. I'll chill. But I'm doing it angrily. Also you just lost The Game.")
