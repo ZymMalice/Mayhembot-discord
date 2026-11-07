@@ -115,7 +115,7 @@ _load_memory()
 
 # --- TASKS + TALK ---
 # Tasks: todos + reminders + timers, saved to mayhem_tasks.json so they survive restarts
-# Talk: !chat / !ask / "hey mayhem" / DM = real conversation with AI, still in Mayhem voice but actually helpful
+# Talk: !chat / !ask / "hey bot" / DM = real conversation with AI, still in Mayhem voice but actually helpful
 TASKS_FILE = os.getenv("TASKS_FILE", "mayhem_tasks.json")
 TODOS = {}  # user_id(str) -> list of {id, text, done, created}
 REMINDERS = []  # list of {id, user_id, channel_id, guild_id, text, due_iso}
@@ -175,7 +175,7 @@ _load_tasks()
 
 # --- OWNER-ONLY TASKS ---
 # Tasks (!todo, !remind, !timer, etc.) are ONLY for the server owner.
-# Chat (!chat, !ask, hey mayhem, DMs) works for EVERYONE like a regular AI.
+# Chat (!chat, !ask, hey bot, DMs) works for EVERYONE like a regular AI.
 # Owner = Discord server owner (guild.owner_id) OR MAYHEM_OWNER_ID env var if you set it.
 # This way you don't have to set anything - if you own the server, you're the owner.
 def is_server_owner(ctx):
@@ -195,13 +195,13 @@ def is_server_owner(ctx):
 async def owner_only_check(ctx):
     if is_server_owner(ctx):
         return True
-    await ctx.send(f"Nice try {ctx.author.mention} 😭 Tasks are owner-only. You can still talk to me though - try `!chat`, `!ask`, or just say `hey mayhem ...` - I'm a regular AI for everyone else. Tasks are just for the boss (the server owner).")
+    await ctx.send(f"Nice try {ctx.author.mention} 😭 Tasks are owner-only. You can still talk to me though - try `!chat`, `!ask`, or just say `hey bot ...` - I'm a regular AI for everyone else. Tasks are just for the boss (the server owner).")
     return False
 
 async def admin_only_check(ctx):
     if is_server_owner(ctx):
         return True
-    await ctx.send(f"Nice try {ctx.author.mention} 😭 That's a boss-only button. You can still talk to me - `!chat`, `!ask`, `hey mayhem ...` - but only the server owner can move me, shut me up, make me mimic someone, or DM-ambush people.")
+    await ctx.send(f"Nice try {ctx.author.mention} 😭 That's a boss-only button. You can still talk to me - `!chat`, `!ask`, `hey bot ...` - but only the server owner can move me, shut me up, make me mimic someone, or DM-ambush people.")
     return False
 
 intents = discord.Intents.default()
@@ -615,11 +615,11 @@ async def on_message(message):
         await asyncio.sleep(random.uniform(1.0, 2.5))
         await message.reply(f"THANK YOU. {message.author.mention} just made EVERYONE lose The Game. We were doing SO good. I hope you're happy. You just lost The Game. We ALL just lost The Game.")
         return
-    # TALK MODE: "hey mayhem", "mayhem,", "yo mayhem" or replying to bot = real conversation
-    is_talk = re.match(r"^(hey|hi|yo|ok|so)?\s*mayhem[,:]?\s+", content_lower) or content_lower.startswith("mayhem ") or content_lower.startswith("hey mayhem")
+    # TALK MODE: "hey bot", "bot,", "yo bot" or replying to bot = real conversation
+    is_talk = re.match(r"^(hey|hi|yo|ok|so)?\\s*bot[,:]?\\s+", content_lower) or content_lower.startswith("bot ") or content_lower.startswith("hey bot") or content_lower.startswith("hey bot,")
     is_reply_to_bot = message.reference and message.reference.resolved and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author == bot.user
     if (is_talk or is_reply_to_bot) and not content_lower.startswith("!"):
-        talk_text = re.sub(r"^(hey|hi|yo|ok|so)?\s*mayhem[,:]?\s+", "", message.content, flags=re.IGNORECASE).strip() or message.content
+        talk_text = re.sub(r"^(hey|hi|yo|ok|so)?\\s*bot[,:]?\\s+", "", message.content, flags=re.IGNORECASE).strip() or message.content
         chat = await get_ai_chat_reply(talk_text, message.author.display_name, message.channel.id, message.author.id)
         if chat:
             await asyncio.sleep(random.uniform(1.0, 2.0))
@@ -936,7 +936,7 @@ async def timer_cmd(ctx, *, text: str = "10m"):
 
 @bot.command(name="tasks")
 async def tasks_cmd(ctx):
-    await ctx.send("**TASKS (OWNER ONLY) + TALK (EVERYONE):**\nTalk for everyone: `!chat <msg>`, `!ask <msg>`, or just say `hey mayhem ...` or DM me\nTasks for server owner only: `!todo buy milk` / `!todos` / `!done 2` / `!clear`\nRemind (owner): `!remind in 10m feed dog` / `!reminders` / `!cancel 1`\nTimer (owner): `!timer 10m pizza`")
+    await ctx.send("**TASKS (OWNER ONLY) + TALK (EVERYONE):**\nTalk for everyone: `!chat <msg>`, `!ask <msg>`, or just say `hey bot ...` or DM me\nTasks for server owner only: `!todo buy milk` / `!todos` / `!done 2` / `!clear`\nRemind (owner): `!remind in 10m feed dog` / `!reminders` / `!cancel 1`\nTimer (owner): `!timer 10m pizza`")
 
 @bot.command(name="chill")
 async def chill(ctx):
