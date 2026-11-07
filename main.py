@@ -52,6 +52,15 @@ CHAT_SYSTEM_PROMPT = (
     "NEVER mention The Game unless they ask about The Game. Do NOT end jokes / answers with 'you just lost The Game'. Just answer like Spense would. "
 )
 
+# --- LORE - Mr. Mayhem's official history ---
+try:
+    LORE_TEXT = open("lore.txt", encoding="utf-8").read()
+except:
+    LORE_TEXT = ""
+# Inject lore into both prompts so the bot stays in character
+AI_SYSTEM_PROMPT = AI_SYSTEM_PROMPT + "\n\nMR. MAYHEM LORE - you ARE this person, use this history when asked about yourself, don't make up new backstory:\n" + LORE_TEXT
+CHAT_SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT + "\n\nMR. MAYHEM LORE - you ARE this person:\n" + LORE_TEXT
+
 # --- MEMORY + MIMIC ---
 MAYHEM_OWNER_ID = os.getenv("MAYHEM_OWNER_ID", "").strip() or "911482725473615883"  # Spense - Discord ID, owner + mimic target by default
 MEMORY_FILE = os.getenv("MEMORY_FILE", "mayhem_memory.json")
@@ -659,6 +668,10 @@ async def dmambush(ctx, target: discord.Member = None):
         await victim.send(random.choice(DM_GAME_AMBUSH))
         await ctx.send(f"💀 DM ambush sent to {victim.mention}. They just lost The Game and they don't even know why yet.")
     except: await ctx.send(f"Couldn't DM {victim.mention}, they got DMs closed. They got lucky this time.")
+    
+@bot.command(name="lore")
+async def lore(ctx):
+    await ctx.send("**MASS MAYHEM CREW - 2016-2026 #BRINGTHEMAYHEM**\n\nStarted 2016 on a potato PC after a breakup watching 【entity-Sons of Anarchy¦canonical_name=Sons of Anarchy】. Built The Realm in 【entity-Minecraft¦canonical_name=Minecraft】, filled Matt's house with chickens. Sank devs in 【entity-Sea of Thieves¦canonical_name=Sea of Thieves】 with the Aussies. Became Zeyander, then ZymMalice. Matt + Optical never left. Retired Aug 2026 to do it for fun, not views. No views. No money. Just mayhem.\n\nThe mayhem never dies, it just finds a new home.")
 
 @bot.command(name="purge")
 async def purge(ctx, amount: int = 10):
