@@ -776,7 +776,7 @@ async def random_dm_ambusher():
         except Exception as e:
             print(f"Could not DM {victim}: {e}")
             
-@bot.command(name="clear")
+@bot.command(name="purge")
 async def clear(ctx, amount: int = 10):
     # Only you can use this - stops randos from wiping the chat
     if str(ctx.author.id) != str(MAYHEM_OWNER_ID):
