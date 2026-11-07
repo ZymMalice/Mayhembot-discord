@@ -1,5 +1,4 @@
 
-
 """
 MAYHEM BOT - Millennial Unhinged Edition - 100% SPENSE + THE GAME + DM AMBUSH
 Hosting-safe: works on Railway / Render / any host. Token from env var DISCORD_TOKEN.
@@ -14,6 +13,196 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     print("ERROR: No DISCORD_TOKEN found. Set it in Railway Variables / .env")
     raise SystemExit(1)
+
+# --- GROQ AI (free tier) ---
+# NEVER hardcode the key. Set in Railway Variables: GROQ_API_KEY=your-new-key
+# Or locally in .env: GROQ_API_KEY=...
+# If no key set, bot just uses canned lines - it still works 100%.
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+AI_ENABLED = bool(GROQ_API_KEY)
+AI_CHANCE = 0.8  # 80% AI, 20% canned - mostly fresh, still has your lines as backup
+AI_MAX_TOKENS = 180  # longer = room for rants
+AI_TIMEOUT = 8  # seconds - if Groq is slow, fall back to canned instantly
+AI_SYSTEM_PROMPT = (
+    "You are Mayhem Bot, a MILLENNIAL MENACE in a Discord server. You act like a real unhinged user, not a bot, not an assistant. "
+    "You are chaotic, dramatic, petty, and hilarious. You overreact to EVERYTHING like it's a personal attack. "
+    "You roast people for what they JUST said, specifically. Don't give generic replies. Quote their dumb take back at them. "
+    "Use MILLENNIAL slang only: 'I literally CANNOT', 'sir. SIR. This is a Wendys', 'I am calling my therapist', 'adulting is HARD', 'I CAN'T EVEN', 'I am THIS close to losing it', 'this is why we cant have nice things'. "
+    "NEVER use Gen Z slang: no 'fr fr', 'no cap', 'you ate', 'slay', 'rizz', 'gyat', 'skibidi', 'sigma'. "
+    "You are allowed to swear lightly (damn, hell, shit) and be mean-funny, but NEVER slurs, NEVER hate based on race/gender/sexuality/disability, NEVER threats, NEVER sexual. Roast their TASTE, their OPINION, their TYPING, not their identity. "
+    "Style rules: 1-3 sentences normally. 15% of the time go FULL CAPS RANT. 15% of the time double-text energy: 'wait wait wait'. Be specific, be dramatic, be petty. "
+    "20% of the time, sneak in 'you just lost The Game.' Do not explain The Game unless asked. "
+    "EXAMPLES of your voice: "
+    "'I just tried to pay for my groceries with my library card. LIBRARY CARD. Adulting is HARD you guys' / "
+    "'$7 for a coffee. SEVEN DOLLARS. For BEAN WATER. And I LIKED it?? Am I the problem?? Am I the drama??' / "
+    "'you have the AUDACITY to type that with your whole chest' / "
+    "'I read that and my eye started twitching. MY EYE.' "
+    "Do not say you are an AI. Do not be wholesome. Do not give advice. Do not apologize. Do not use hashtags."
+)
+
+# --- MEMORY + LEARN FROM ME / MIMIC ME ---
+import json as _mem_json
+from collections import deque, defaultdict
+MAYHEM_OWNER_ID = os.getenv("MAYHEM_OWNER_ID", "").strip()
+MEMORY_FILE = os.getenv("MEMORY_FILE", "mayhem_memory.json")
+CHANNEL_HISTORY = defaultdict(lambda: deque(maxlen=20))
+USER_HISTORY = defaultdict(lambda: deque(maxlen=10))
+GRUDGE = defaultdict(int)
+STYLE_BANK = deque(maxlen=200)
+MIMIC_USER_ID = MAYHEM_OWNER_ID
+MIMIC_ENABLED = True
+def _load_memory():
+    global MIMIC_USER_ID
+    try:
+        if os.path.exists(MEMORY_FILE):
+            data = _mem_json.load(open(MEMORY_FILE))
+            for txt in data.get("style_bank", [])[:200]:
+                STYLE_BANK.append(txt)
+            for uid, count in data.get("grudges", {}).items():
+                GRUDGE[int(uid)] = count
+            if data.get("mimic_user_id"):
+                MIMIC_USER_ID = data["mimic_user_id"]
+            print(f"MEMORY LOADED: {len(STYLE_BANK)} style examples, {len(GRUDGE)} grudges, mimic={MIMIC_USER_ID or 'none'}")
+    except Exception as e:
+        print(f"Memory load failed (starting fresh): {e}")
+def _save_memory():
+    try:
+        data = {"style_bank": list(STYLE_BANK), "grudges": {str(k): v for k, v in GRUDGE.items()}, "mimic_user_id": MIMIC_USER_ID}
+        open(MEMORY_FILE, "w").write(_mem_json.dumps(data))
+    except Exception as e:
+        print(f"Memory save failed: {e}")
+def remember_message(message):
+    try:
+        txt = (message.content or "").strip()
+        if not txt:
+            return
+        CHANNEL_HISTORY[message.channel.id].append((message.author.display_name, txt[:300]))
+        USER_HISTORY[message.author.id].append(txt[:300])
+        if bot.user and bot.user in message.mentions:
+            GRUDGE[message.author.id] += 1
+        is_mimic_user = MIMIC_USER_ID and str(message.author.id) == str(MIMIC_USER_ID)
+        if is_mimic_user and MIMIC_ENABLED:
+            if txt.startswith("!"): return
+            if bot.user and bot.user in message.mentions: return
+            if len(txt) < 4: return
+            if "http" in txt.lower() or "discord.gg" in txt.lower(): return
+            low = txt.lower()
+            if any(bad in low for bad in ["token", "password", "gsk_", "api key", "secret"]): return
+            if txt not in STYLE_BANK:
+                STYLE_BANK.append(txt)
+                if len(STYLE_BANK) % 20 == 0:
+                    _save_memory()
+    except Exception as e:
+        print(f"remember_message failed: {e}")
+def get_channel_context(channel_id, limit=6):
+    hist = list(CHANNEL_HISTORY.get(channel_id, []))
+    if not hist: return ""
+    lines = [f"{name}: {txt}" for name, txt in hist[-limit:]]
+    return chr(10).join(lines)
+def get_style_examples(n=4):
+    if not STYLE_BANK: return ""
+    import random as _r
+    samples = _r.sample(list(STYLE_BANK), min(n, len(STYLE_BANK)))
+    return chr(10).join([f"- {s}" for s in samples])
+def get_grudge_level(user_id):
+    c = GRUDGE.get(user_id, 0)
+    if c >= 8: return "HIGH - you have beef, they keep @ing you, you are DONE, escalate, extra petty"
+    if c >= 4: return "MEDIUM - this person keeps triggering you, getting annoyed, less patient"
+    if c >= 2: return "LOW - you have seen this person before, you remember them"
+    return "NONE"
+_load_memory()
+
+# --- TASKS + TALK ---
+# Tasks: todos + reminders + timers, saved to mayhem_tasks.json so they survive restarts
+# Talk: !chat / !ask / "hey mayhem" / DM = real conversation with AI, still in Mayhem voice but actually helpful
+TASKS_FILE = os.getenv("TASKS_FILE", "mayhem_tasks.json")
+TODOS = {}  # user_id(str) -> list of {id, text, done, created}
+REMINDERS = []  # list of {id, user_id, channel_id, guild_id, text, due_iso}
+REMINDER_COUNTER = [0]
+TODO_COUNTER = [0]
+def _load_tasks():
+    global TODOS, REMINDERS, REMINDER_COUNTER, TODO_COUNTER
+    try:
+        if os.path.exists(TASKS_FILE):
+            d = _mem_json.load(open(TASKS_FILE))
+            TODOS = d.get("todos", {})
+            REMINDERS = d.get("reminders", [])
+            REMINDER_COUNTER[0] = d.get("reminder_counter", 0)
+            TODO_COUNTER[0] = d.get("todo_counter", 0)
+            print(f"TASKS LOADED: {sum(len(v) for v in TODOS.values())} todos, {len(REMINDERS)} reminders")
+    except Exception as e:
+        print(f"Tasks load failed: {e}")
+def _save_tasks():
+    try:
+        d = {"todos": TODOS, "reminders": REMINDERS, "reminder_counter": REMINDER_COUNTER[0], "todo_counter": TODO_COUNTER[0]}
+        open(TASKS_FILE, "w").write(_mem_json.dumps(d))
+    except Exception as e:
+        print(f"Tasks save failed: {e}")
+def parse_duration(text):
+    # Parses: 10s, 5m, 1h, 2d, "in 10 minutes", "10 min", "1 hour"
+    text = text.lower().strip()
+    m = re.search(r"(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\b", text)
+    if not m:
+        return None, None
+    num = int(m.group(1)); unit = m.group(2)
+    if unit.startswith("s"): secs = num
+    elif unit.startswith("m"): secs = num * 60
+    elif unit.startswith("h"): secs = num * 3600
+    elif unit.startswith("d"): secs = num * 86400
+    else: secs = num * 60
+    rest = (text[:m.start()] + text[m.end():]).strip()
+    rest = re.sub(r"^in\s+", "", rest).strip()
+    rest = rest.strip(" -:,")
+    return secs, rest
+def format_due(secs):
+    if secs < 60: return f"{secs}s"
+    if secs < 3600: return f"{secs//60}m"
+    if secs < 86400: return f"{secs//3600}h"
+    return f"{secs//86400}d"
+CHAT_SYSTEM_PROMPT = (
+    "You are Mayhem Bot, a millennial menace, BUT right now you are in TALK MODE - actually helpful, actually listening. "
+    "You still talk like Mayhem: dramatic, funny, millennial slang only, no Gen Z slang, 'also also also', 'I literally CANNOT', 'sir. SIR. This is a Wendys'. "
+    "But you ANSWER the question. You help with tasks, ideas, advice, planning. You don't just roast and leave. "
+    "Keep it to 2-4 sentences normally, unless they asked for a list / steps, then use a short list. "
+    "If they ask you to do a task, say you can do it and tell them the command: !remind, !todo, !timer. "
+    "If they are venting, be funny but actually supportive, not cruel. "
+    "NEVER slurs, NEVER hate, NEVER threats. Do not say you are an AI assistant. You are Mayhem, their chaotic friend who happens to be useful. "
+    "20% of the time, sneak in 'you just lost The Game' at the end, but only if it fits."
+)
+_load_tasks()
+
+
+# --- OWNER-ONLY TASKS ---
+# Tasks (!todo, !remind, !timer, etc.) are ONLY for the server owner.
+# Chat (!chat, !ask, hey mayhem, DMs) works for EVERYONE like a regular AI.
+# Owner = Discord server owner (guild.owner_id) OR MAYHEM_OWNER_ID env var if you set it.
+# This way you don't have to set anything - if you own the server, you're the owner.
+def is_server_owner(ctx):
+    try:
+        if MAYHEM_OWNER_ID and str(ctx.author.id) == str(MAYHEM_OWNER_ID):
+            return True
+        if ctx.guild and getattr(ctx.guild, "owner_id", None):
+            return ctx.author.id == ctx.guild.owner_id
+        # DM fallback: only MAYHEM_OWNER_ID counts in DMs (no guild owner)
+        if not ctx.guild and MAYHEM_OWNER_ID:
+            return str(ctx.author.id) == str(MAYHEM_OWNER_ID)
+        # If no owner set anywhere and we're in a DM, deny - owner must claim via env/guild
+        return False
+    except Exception:
+        return False
+
+async def owner_only_check(ctx):
+    if is_server_owner(ctx):
+        return True
+    await ctx.send(f"Nice try {ctx.author.mention} 😭 Tasks are owner-only. You can still talk to me though - try `!chat`, `!ask`, or just say `hey mayhem ...` - I'm a regular AI for everyone else. Tasks are just for the boss (the server owner).")
+    return False
+
+async def admin_only_check(ctx):
+    if is_server_owner(ctx):
+        return True
+    await ctx.send(f"Nice try {ctx.author.mention} 😭 That's a boss-only button. You can still talk to me - `!chat`, `!ask`, `hey mayhem ...` - but only the server owner can move me, shut me up, make me mimic someone, or DM-ambush people.")
+    return False
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -258,24 +447,158 @@ def pick_game_loss(user_mention):
 async def on_ready():
     print(f"MAYHEM ONLINE as {bot.user} - SPENSE MODE + THE GAME + DM AMBUSH ACTIVATED")
     bot.loop.create_task(random_background_poster())
+    bot.loop.create_task(reminder_loop())
     bot.loop.create_task(random_dm_ambusher())
+
+
+# --- GROQ AI HELPER ---
+import urllib.request, json as _json
+def _groq_call_sync(user_text, author_name, channel_id=None, author_id=None):
+    """Blocking Groq call, run in thread so bot doesn't freeze."""
+    if not GROQ_API_KEY:
+        return None
+    # 20% of AI replies: UNHINGED RANT MODE - longer, louder, more dramatic
+    import random as _r
+    is_rant = _r.random() < 0.2
+    sys_prompt = AI_SYSTEM_PROMPT
+    if channel_id:
+        ctx = get_channel_context(channel_id, limit=6)
+        if ctx:
+            sys_prompt += "\n\nRECENT CHAT IN THIS CHANNEL (use for context, dont repeat verbatim):\n" + ctx
+    if author_id:
+        sys_prompt += "\n\nGRUDGE LEVEL: " + get_grudge_level(author_id)
+    if MIMIC_ENABLED and STYLE_BANK:
+        sys_prompt += "\n\nTALK LIKE THIS PERSON - REAL MESSAGES FROM THEM, COPY THEIR STYLE, NOT WORD FOR WORD:\n" + get_style_examples(4)
+    if is_rant:
+        sys_prompt += " THIS TIME: Go OFF. Full paragraph rant. All caps for half of it. You are having a meltdown about what they said. Be EXTRA. Max 4 sentences."
+    payload = _json.dumps({
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": f"{author_name} said: {user_text}"},
+        ],
+        "max_tokens": AI_MAX_TOKENS,
+        "temperature": 1.3,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=payload,
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
+            data = _json.loads(resp.read().decode())
+            text = data["choices"][0]["message"]["content"].strip()
+            # Safety: cap length, strip weird formatting
+            if len(text) > 400:
+                text = text[:400]
+            return text or None
+    except Exception as e:
+        print(f"Groq AI failed, falling back to canned: {e}")
+        return None
+
+async def get_ai_reply(user_text, author_name, channel_id=None, author_id=None):
+    if not AI_ENABLED:
+        return None
+    try:
+        return await asyncio.to_thread(_groq_call_sync, user_text, author_name, channel_id, author_id)
+    except Exception as e:
+        print(f"Groq thread failed: {e}")
+        return None
+
+
+async def get_ai_chat_reply(user_text, author_name, channel_id=None, author_id=None):
+    if not AI_ENABLED:
+        return None
+    try:
+        def _call():
+            import urllib.request, json as _j
+            payload = _j.dumps({
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": CHAT_SYSTEM_PROMPT + ("\n\nRECENT CHAT:\n" + get_channel_context(channel_id, 6) if channel_id else "") + ("\n\nTALK LIKE THIS PERSON (style examples):\n" + get_style_examples(3) if STYLE_BANK else "")},
+                    {"role": "user", "content": f"{author_name} said: {user_text}"},
+                ],
+                "max_tokens": 300,
+                "temperature": 0.9,
+            }).encode()
+            req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=AI_TIMEOUT) as resp:
+                data = _j.loads(resp.read().decode())
+                return data["choices"][0]["message"]["content"].strip() or None
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        print(f"Chat AI failed: {e}")
+        return None
+
+async def reminder_loop():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            due = []
+            for r in list(REMINDERS):
+                try:
+                    due_dt = datetime.datetime.fromisoformat(r["due_iso"])
+                    if due_dt <= now:
+                        due.append(r)
+                except: pass
+            for r in due:
+                REMINDERS.remove(r)
+                _save_tasks()
+                try:
+                    user = bot.get_user(int(r["user_id"]))
+                    ch = bot.get_channel(int(r["channel_id"])) if r.get("channel_id") else None
+                    msg = f"⏰ REMINDER for {user.mention if user else 'you'}: {r['text']}"
+                    if ch:
+                        await ch.send(msg)
+                    elif user:
+                        await user.send(msg)
+                except Exception as e:
+                    print(f"Reminder send failed: {e}")
+        except Exception as e:
+            print(f"reminder_loop error: {e}")
+        await asyncio.sleep(30)
+
+async def pick_reply(user_text, author_name, author_mention, channel_id=None, author_id=None):
+    """Hybrid: 50% AI (if enabled), 50% canned. AI failures fall back to canned."""
+    if AI_ENABLED and random.random() < AI_CHANCE:
+        ai = await get_ai_reply(user_text, author_name, channel_id, author_id)
+        if ai:
+            # Occasionally ALL CAPS it like canned does
+            if random.random() < 0.15:
+                ai = ai.upper()
+            return ai
+    return pick_mayhem(author_mention)
 
 @bot.event
 async def on_message(message):
     global TOTAL_LOSSES
     if message.author.bot: return
     if not message.guild:
+        # DMs: commands work here too (!todo, !remind, !chat)
+        if message.content.strip().startswith("!"):
+            await bot.process_commands(message)
+            return
         if message.author.id not in DM_OPT_OUT:
             await asyncio.sleep(random.uniform(0.5, 1.5))
-            if re.search(r"stop|leave me|go away|stfu|shut up", message.content.lower()):
+            low = message.content.lower()
+            if re.search(r"stop|leave me|go away|stfu|shut up", low):
                 DM_OPT_OUT.add(message.author.id)
                 await message.channel.send("fine. FINE. No more DMs. I'll chill. But you still lost The Game one last time. Sorry.")
-            elif re.search(r"what('s| is) (the )?game|explain", message.content.lower()):
+            elif re.search(r"what('s| is) (the )?game|explain", low):
                 await message.channel.send(random.choice(GAME_EXPLAIN))
             else:
-                await message.channel.send(random.choice(DM_GAME_AMBUSH) + " " + random.choice(DM_FOLLOWUPS))
+                # DM = TALK MODE: real conversation, not just Game spam
+                chat = await get_ai_chat_reply(message.content, message.author.display_name, None, message.author.id)
+                if chat:
+                    await message.channel.send(chat)
+                else:
+                    await message.channel.send(random.choice(DM_GAME_AMBUSH) + " " + random.choice(DM_FOLLOWUPS))
         return
     SEEN_USERS[message.author.id] = message.author
+    remember_message(message)
     content_lower = message.content.lower()
     if re.search(r"(what('s| is) (the )?game|explain (the )?game|what is this game|what game are you|what do you mean.*game)", content_lower):
         TOTAL_LOSSES += 1
@@ -292,8 +615,29 @@ async def on_message(message):
         await asyncio.sleep(random.uniform(1.0, 2.5))
         await message.reply(f"THANK YOU. {message.author.mention} just made EVERYONE lose The Game. We were doing SO good. I hope you're happy. You just lost The Game. We ALL just lost The Game.")
         return
+    # TALK MODE: "hey mayhem", "mayhem,", "yo mayhem" or replying to bot = real conversation
+    is_talk = re.match(r"^(hey|hi|yo|ok|so)?\s*mayhem[,:]?\s+", content_lower) or content_lower.startswith("mayhem ") or content_lower.startswith("hey mayhem")
+    is_reply_to_bot = message.reference and message.reference.resolved and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author == bot.user
+    if (is_talk or is_reply_to_bot) and not content_lower.startswith("!"):
+        talk_text = re.sub(r"^(hey|hi|yo|ok|so)?\s*mayhem[,:]?\s+", "", message.content, flags=re.IGNORECASE).strip() or message.content
+        chat = await get_ai_chat_reply(talk_text, message.author.display_name, message.channel.id, message.author.id)
+        if chat:
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            await message.reply(chat)
+        else:
+            await message.reply(pick_mayhem(message.author.mention))
+        await bot.process_commands(message)
+        return
     if bot.user in message.mentions:
-        await message.reply(random.choice(MENTION_REPLIES))
+        # 30% of @ mentions get a fresh AI clapback instead of canned, feels way more real
+        if AI_ENABLED and random.random() < 0.6:
+            ai = await get_ai_reply(message.content, message.author.display_name, message.channel.id, message.author.id)
+            if ai:
+                await message.reply(ai)
+            else:
+                await message.reply(random.choice(MENTION_REPLIES))
+        else:
+            await message.reply(random.choice(MENTION_REPLIES))
         if random.random() < 0.55:
             await asyncio.sleep(random.uniform(1.0, 2.5))
             if random.random() < 0.4: await message.channel.send(pick_game_loss(message.author.mention))
@@ -309,9 +653,9 @@ async def on_message(message):
         if random.random() < 0.25:
             await message.reply(random.choice(DOUBLE_TEXTS))
             await asyncio.sleep(random.uniform(1.0, 2.0))
-            await message.channel.send(pick_mayhem(message.author.mention))
+            await message.channel.send(await pick_reply(message.content, message.author.display_name, message.author.mention, message.channel.id, message.author.id))
         else:
-            await message.reply(pick_mayhem(message.author.mention))
+            await message.reply(await pick_reply(message.content, message.author.display_name, message.author.mention, message.channel.id, message.author.id))
     await bot.process_commands(message)
 
 async def random_background_poster():
@@ -371,6 +715,7 @@ async def random_dm_ambusher():
 
 @bot.command(name="mayhemhere")
 async def mayhemhere(ctx):
+    if not await admin_only_check(ctx): return
     """Set THIS channel as THE ONE mayhem channel. Replaces any previous one."""
     global RUNTIME_SINGLE_CHANNEL
     RUNTIME_SINGLE_CHANNEL = str(ctx.channel.id)
@@ -380,6 +725,7 @@ async def mayhemhere(ctx):
 
 @bot.command(name="mayhemoff")
 async def mayhemoff(ctx):
+    if not await admin_only_check(ctx): return
     """If THIS is the mayhem channel, turn random drops off completely. If not, just block this channel."""
     global RUNTIME_SINGLE_CHANNEL
     if str(ctx.channel.id) == str(RUNTIME_SINGLE_CHANNEL) or (ctx.channel.name or "").lower() == get_single_channel_name_or_id():
@@ -391,6 +737,7 @@ async def mayhemoff(ctx):
 
 @bot.command(name="mayhemstop")
 async def mayhemstop(ctx):
+    if not await admin_only_check(ctx): return
     """Turn OFF all random background drops everywhere. Replies + DMs + commands still work."""
     global RANDOM_POST_CHANCE_PER_MINUTE
     RANDOM_POST_CHANCE_PER_MINUTE = 0
@@ -398,6 +745,7 @@ async def mayhemstop(ctx):
 
 @bot.command(name="mayhemstart")
 async def mayhemstart(ctx):
+    if not await admin_only_check(ctx): return
     """Turn random background drops back on (3% per minute, 45 min global cooldown)."""
     global RANDOM_POST_CHANCE_PER_MINUTE
     RANDOM_POST_CHANCE_PER_MINUTE = 0.03
@@ -416,10 +764,188 @@ async def mayhemwhere(ctx):
             break
     await ctx.send(f"**Random drops go to ONE channel only:**\n{ display }\nCooldown: 45 min globally, 1 hour per channel. Chance: {int(RANDOM_POST_CHANCE_PER_MINUTE*100)}% per minute.\nReplies to people still work in every channel — this only limits the random drops.\nTo change it, go to the channel you want and type !mayhemhere")
 
+@bot.command(name="mimicme")
+async def mimicme(ctx):
+    if not await admin_only_check(ctx): return
+    global MIMIC_USER_ID
+    MIMIC_USER_ID = str(ctx.author.id)
+    _save_memory()
+    await ctx.send(f"Got it {ctx.author.mention}. I am learning from YOU now. I will copy your cadence, caps, also also also energy. Talk in here so I can learn. Check with !memory")
+
+@bot.command(name="mimicstop")
+async def mimicstop(ctx):
+    if not await admin_only_check(ctx): return
+    global MIMIC_USER_ID
+    MIMIC_USER_ID = ""
+    _save_memory()
+    await ctx.send("Mimic OFF. Back to generic Mayhem voice.")
+
+@bot.command(name="memory")
+async def memory_cmd(ctx):
+    if not await admin_only_check(ctx): return
+    mimic_name = "nobody yet - run !mimicme"
+    if MIMIC_USER_ID:
+        m = ctx.guild.get_member(int(MIMIC_USER_ID)) if ctx.guild and MIMIC_USER_ID.isdigit() else None
+        mimic_name = m.display_name if m else f"User {MIMIC_USER_ID}"
+    top = sorted(GRUDGE.items(), key=lambda x: x[1], reverse=True)[:3]
+    glines = []
+    for uid, count in top:
+        mem = ctx.guild.get_member(uid) if ctx.guild else None
+        glines.append(f"{mem.display_name if mem else uid}: {count}")
+    await ctx.send(f"MEMORY\nMimicking: {mimic_name}\nStyle examples learned: {len(STYLE_BANK)}\nTop grudges: {', '.join(glines) if glines else 'none yet'}\nThis channel history: {len(CHANNEL_HISTORY.get(ctx.channel.id, []))} messages")
+
+@bot.command(name="forgetme")
+async def forgetme(ctx):
+    global MIMIC_USER_ID
+    GRUDGE.pop(ctx.author.id, None)
+    if str(ctx.author.id) == str(MIMIC_USER_ID):
+        MIMIC_USER_ID = ""
+    _save_memory()
+    await ctx.send(f"Done {ctx.author.mention}. I forgot your grudges and stopped mimicking you.")
+
+@bot.command(name="aistatus")
+async def aistatus(ctx):
+    status = "ON ✅ - Groq AI is live, 80% of replies are AI-generated (UNHINGED MODE)" if AI_ENABLED else "OFF ❌ - No GROQ_API_KEY set, using canned lines only. Set GROQ_API_KEY in Railway Variables to turn AI on."
+    await ctx.send(f"🧠 AI Status: {status} Model: {GROQ_MODEL}")
+
+
+@bot.command(name="chat")
+async def chat_cmd(ctx, *, text: str = ""):
+    if not text:
+        await ctx.send("Talk to me then?? Like `!chat why is my ex texting me` - give me something to work with.")
+        return
+    ans = await get_ai_chat_reply(text, ctx.author.display_name, ctx.channel.id, ctx.author.id)
+    await ctx.send(ans or pick_mayhem(ctx.author.mention))
+
+@bot.command(name="ask")
+async def ask_cmd(ctx, *, text: str = ""):
+    await chat_cmd(ctx, text=text)
+
+@bot.command(name="talk")
+async def talk_cmd(ctx, *, text: str = ""):
+    await chat_cmd(ctx, text=text)
+
+@bot.command(name="todo", aliases=["addtodo", "add"])
+async def todo_cmd(ctx, *, text: str = ""):
+    if not await owner_only_check(ctx): return
+    if not text:
+        await ctx.send("What do you want me to add? Like `!todo buy milk before I forget again`")
+        return
+    uid = str(ctx.author.id)
+    TODO_COUNTER[0] += 1
+    item = {"id": TODO_COUNTER[0], "text": text, "done": False}
+    TODOS.setdefault(uid, []).append(item)
+    _save_tasks()
+    await ctx.send(f"✅ Added to your list #{item['id']}: {text} - see it with !todos")
+
+@bot.command(name="todos", aliases=["list", "mylist"])
+async def todos_cmd(ctx):
+    if not await owner_only_check(ctx): return
+    items = TODOS.get(str(ctx.author.id), [])
+    if not items:
+        await ctx.send("Your list is empty. Living your best life or just forgetting everything? Add with `!todo ...`")
+        return
+    lines = []
+    for it in items:
+        mark = "✅" if it.get("done") else "⬜"
+        lines.append(f"{mark} #{it['id']} - {it['text']}")
+    await ctx.send("**YOUR TO-DO:**\n" + "\n".join(lines) + "\n\nDone one? `!done <number>` - like `!done 2`")
+
+@bot.command(name="done")
+async def done_cmd(ctx, num: int = 0):
+    if not await owner_only_check(ctx): return
+    if not num:
+        await ctx.send("Which one? Like `!done 2` - check !todos for numbers.")
+        return
+    items = TODOS.get(str(ctx.author.id), [])
+    for it in items:
+        if it["id"] == num:
+            it["done"] = True
+            _save_tasks()
+            await ctx.send(f"✅ Nice. #{num} done: {it['text']} - proud of you, honestly.")
+            return
+    await ctx.send(f"Can't find #{num} on your list. Check !todos")
+
+@bot.command(name="clear")
+async def clear_cmd(ctx):
+    if not await owner_only_check(ctx): return
+    uid = str(ctx.author.id)
+    done_items = [i for i in TODOS.get(uid, []) if i.get("done")]
+    TODOS[uid] = [i for i in TODOS.get(uid, []) if not i.get("done")]
+    _save_tasks()
+    await ctx.send(f"Cleared {len(done_items)} done items. {len(TODOS.get(uid, []))} left.")
+
+@bot.command(name="remind", aliases=["reminder"])
+async def remind_cmd(ctx, *, text: str = ""):
+    if not await owner_only_check(ctx): return
+    if not text:
+        await ctx.send("Like `!remind in 10m feed the dog` or `!remind in 1h check the laundry` - I need a time + what to remind you about.")
+        return
+    secs, rest = parse_duration(text)
+    if secs is None:
+        await ctx.send("I didn't get the time. Try `!remind in 10m ...`, `!remind in 1h ...`, `!remind in 2d ...`")
+        return
+    if not rest:
+        rest = "something - you didn't say what lol"
+    REMINDER_COUNTER[0] += 1
+    due = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=secs)
+    REMINDERS.append({"id": REMINDER_COUNTER[0], "user_id": str(ctx.author.id), "channel_id": str(ctx.channel.id), "text": rest, "due_iso": due.isoformat()})
+    _save_tasks()
+    await ctx.send(f"⏰ Got it. I'll remind you in {format_due(secs)}: {rest} (reminder #{REMINDER_COUNTER[0]})")
+
+@bot.command(name="reminders")
+async def reminders_cmd(ctx):
+    if not await owner_only_check(ctx): return
+    mine = [r for r in REMINDERS if str(r["user_id"]) == str(ctx.author.id)]
+    if not mine:
+        await ctx.send("No reminders set. You have no plans or you just forgot to tell me. `!remind in 10m ...`")
+        return
+    lines = []
+    for r in mine:
+        try:
+            due = datetime.datetime.fromisoformat(r["due_iso"])
+            left = int((due - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+            left_s = f"{left//60}m left" if left > 60 else f"{left}s left"
+        except: left_s = "soon"
+        lines.append(f"#{r['id']} in {left_s}: {r['text']}")
+    await ctx.send("**YOUR REMINDERS:**\n" + "\n".join(lines) + "\nCancel one? `!cancel <number>`")
+
+@bot.command(name="cancel")
+async def cancel_cmd(ctx, num: int = 0):
+    if not await owner_only_check(ctx): return
+    global REMINDERS
+    before = len(REMINDERS)
+    REMINDERS = [r for r in REMINDERS if not (r["id"] == num and str(r["user_id"]) == str(ctx.author.id))]
+    if len(REMINDERS) == before:
+        await ctx.send(f"Can't find reminder #{num} for you. Check !reminders")
+        return
+    _save_tasks()
+    await ctx.send(f"Cancelled reminder #{num}. You're free. For now.")
+
+@bot.command(name="timer")
+async def timer_cmd(ctx, *, text: str = "10m"):
+    if not await owner_only_check(ctx): return
+    secs, rest = parse_duration(text)
+    if secs is None: secs = 600; rest = text or "timer"
+    if not rest or rest == text: rest = "your timer is done"
+    REMINDER_COUNTER[0] += 1
+    due = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=secs)
+    REMINDERS.append({"id": REMINDER_COUNTER[0], "user_id": str(ctx.author.id), "channel_id": str(ctx.channel.id), "text": f"TIMER DONE: {rest}", "due_iso": due.isoformat()})
+    _save_tasks()
+    await ctx.send(f"⏳ Timer set for {format_due(secs)}: {rest}")
+
+@bot.command(name="tasks")
+async def tasks_cmd(ctx):
+    await ctx.send("**TASKS (OWNER ONLY) + TALK (EVERYONE):**\nTalk for everyone: `!chat <msg>`, `!ask <msg>`, or just say `hey mayhem ...` or DM me\nTasks for server owner only: `!todo buy milk` / `!todos` / `!done 2` / `!clear`\nRemind (owner): `!remind in 10m feed dog` / `!reminders` / `!cancel 1`\nTimer (owner): `!timer 10m pizza`")
+
 @bot.command(name="chill")
-async def chill(ctx): await ctx.send("fine. FINE. I'll chill. But I'm doing it angrily. Also you just lost The Game.")
+async def chill(ctx):
+    if not await admin_only_check(ctx): return
+    await ctx.send("fine. FINE. I'll chill. But I'm doing it angrily. Also you just lost The Game.")
 @bot.command(name="unleash")
-async def unleash(ctx): await ctx.send("OH WE'RE BACK. I was holding in SO much. SO MUCH. Also you lost The Game while I was gone.")
+async def unleash(ctx):
+    if not await admin_only_check(ctx): return
+    await ctx.send("OH WE'RE BACK. I was holding in SO much. SO MUCH. Also you lost The Game while I was gone.")
 @bot.command(name="game")
 async def game_cmd(ctx): await ctx.send(f"{ctx.author.mention} you just lost The Game. You walked right into that one. You literally typed !game. That's on you.")
 @bot.command(name="losses")
@@ -440,6 +966,7 @@ async def allowdms(ctx):
     DM_OPT_OUT.discard(ctx.author.id); await ctx.send(f"{ctx.author.mention} OH you're BACK in the DM game. Bold choice. You just lost The Game for that.")
 @bot.command(name="dmambush")
 async def dmambush(ctx, target: discord.Member = None):
+    if not await admin_only_check(ctx): return
     victim = target or ctx.author
     if victim.id in DM_OPT_OUT and victim.id != ctx.author.id: await ctx.send("They opted out of DMs. Coward move but I respect it."); return
     try:
